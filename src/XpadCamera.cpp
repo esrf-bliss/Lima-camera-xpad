@@ -38,18 +38,25 @@ static const int 	BOARDNUM 	= 0;
 //- Ctor
 //---------------------------
 Camera::Camera(string xpad_model): 	m_buffer_cb_mgr(m_buffer_alloc_mgr),
-m_buffer_ctrl_mgr(m_buffer_cb_mgr),
-m_modules_mask(0x00),
-m_chip_number(7),
-m_pixel_depth(B4),
-m_nb_frames(1)
+m_buffer_ctrl_mgr(m_buffer_cb_mgr)
 {
 	DEB_CONSTRUCTOR();
 
 	//- default values:
+    m_modules_mask      = 0x00;
+    m_chip_number       = 7; 
+    m_pixel_depth       = B2; //- 16 bits
+    m_nb_frames         = 1;
+
     m_status            = Camera::Ready;
     m_acquisition_type	= Camera::SYNC;
     m_current_nb_frames = 0;
+
+    m_time_between_images_usec  = 5000;
+	m_ovf_refresh_time_usec     = 4000;
+    m_time_before_start_usec    = 0;
+    m_shutter_time_usec         = 0;
+    m_calibration_adjusting_number = 1;
 
     if		(xpad_model == "BACKPLANE") 	m_xpad_model = BACKPLANE;
     else if	(xpad_model == "IMXPAD_S70")	m_xpad_model = IMXPAD_S70;
@@ -181,7 +188,7 @@ void Camera::start()
 							local_nb_frames,
 							XPIX_NOT_USED_YET,
 							m_imxpad_format,
-							(m_xpad_model == IMXPAD_S140)?1:XPIX_NOT_USED_YET,/**/
+							XPIX_NOT_USED_YET,
 							XPIX_NOT_USED_YET,
 							XPIX_NOT_USED_YET,
 							XPIX_NOT_USED_YET,
@@ -334,11 +341,14 @@ void Camera::setTrigMode(TrigMode mode)
         m_imxpad_trigger_mode = 1;
 		break;
 	case ExtTrigSingle:
-		m_imxpad_trigger_mode = 2;
+		m_imxpad_trigger_mode = 2; //- 1 trig externe declenche N gates internes (les gate etant reglé par soft)
+		break;
+    case ExtTrigMult:
+		m_imxpad_trigger_mode = 3; //- N trig externes declenchent N gates internes (les gate etant reglé par soft) 
 		break;
 	default:
-		DEB_ERROR() << "Error: Trigger mode unsupported: only IntTrig, ExtGate or ExtTrigSingle" ;
-		throw LIMA_HW_EXC(Error, "Trigger mode unsupported: only IntTrig, ExtGate or ExtTrigSingle");
+		DEB_ERROR() << "Error: Trigger mode unsupported: only IntTrig, ExtGate, ExtTrigSingle or ExtTrigMult" ;
+		throw LIMA_HW_EXC(Error, "Trigger mode unsupported: only IntTrig, ExtGate, ExtTrigSingle or ExtTrigMult");
 		break;
 	}
 }
@@ -355,10 +365,13 @@ void Camera::getTrigMode(TrigMode& mode)
 		mode = IntTrig;
 		break;
 	case 1:
-		mode = ExtTrigSingle;
+		mode = ExtGate;
 		break;
 	case 2:
-		mode = ExtGate;
+		mode = ExtTrigSingle; //- 1 trig externe declenche N gates internes (les gate etant reglé par soft)
+		break;
+    case 3:
+		mode = ExtTrigMult; //- N trig externes declenchent N gates internes (les gate etant reglé par soft) 
 		break;
 	default:
 		break;
@@ -489,6 +502,9 @@ void Camera::handle_message( yat::Message& msg )  throw( yat::Exception )
 				//- Start the img sequence
 				DEB_TRACE() <<"Start acquiring a sequence of images";
 
+                Timestamp start_sec = Timestamp::now();
+                //yat::int64 start = Time::microsecs();
+
 				if ( xpci_getImgSeq(	m_pixel_depth, 
 					                    m_modules_mask,
 					                    m_chip_number,
@@ -521,6 +537,9 @@ void Camera::handle_message( yat::Message& msg )  throw( yat::Exception )
                     throw LIMA_HW_EXC(Error, "xpci_getImgSeq as returned an error ! ");
 				}
 
+                Timestamp end_sec = Timestamp::now() - start_sec;
+                DEB_TRACE() << "Time for xpci_getImgSeq (sec) = " << end_sec;
+
 				m_status = Camera::Readout;
 
 				DEB_TRACE() 	<< "\n#######################"
@@ -532,6 +551,7 @@ void Camera::handle_message( yat::Message& msg )  throw( yat::Exception )
 				//- Publish each image and call new frame ready for each frame
 				StdBufferCbMgr& buffer_mgr = m_buffer_cb_mgr;
 				DEB_TRACE() <<"Publish each acquired image through newFrameReady()";
+                start_sec = Timestamp::now();
 				for(i=0; i<m_nb_frames; i++)
 				{
                     m_current_nb_frames = i;
@@ -558,6 +578,11 @@ void Camera::handle_message( yat::Message& msg )  throw( yat::Exception )
                     DEB_TRACE() << "image " << i <<" published with newFrameReady()" ;
 				}
 
+                end_sec = Timestamp::now() - start_sec;
+                DEB_TRACE() << "Time for publishing images to Lima (sec) = " << end_sec;
+
+
+                start_sec = Timestamp::now();
 				DEB_TRACE() <<"Freeing every image pointer of the images array";
                 //- they were allocated by the xpci_getImgSeq function
 				for(i=0 ; i < m_nb_frames ; i++)
@@ -565,6 +590,8 @@ void Camera::handle_message( yat::Message& msg )  throw( yat::Exception )
 				DEB_TRACE() <<"Freeing images array";
 				delete[] image_array;
 				m_status = Camera::Ready;
+                end_sec = Timestamp::now() - start_sec;
+                DEB_TRACE() << "Time for freeing memory: now Ready! (sec) = " << end_sec;
 				DEB_TRACE() <<"m_status is Ready";
 
 			}
@@ -886,21 +913,26 @@ void Camera::handle_message( yat::Message& msg )  throw( yat::Exception )
                 {
                     DEB_TRACE() <<"Camera::->XPAD_DLL_CALIBRATE";
 
-                    m_status = Camera::Exposure;
+                    m_status = Camera::Calibrating;
 
                     switch (m_calibration_type)
                     {
                         //-----------------------------------------------------	
                     case Camera::OTN_SLOW:
                         {
-                            DEB_TRACE() <<"XPAD_DLL_CALIBRATE->OTN_SLOW";    
+                            DEB_TRACE() <<"XPAD_DLL_CALIBRATE->OTN_SLOW";   
 
-                            if(imxpad_calibrationOTN_SLOW(m_modules_mask,(char*)m_calibration_path.c_str()) == 0)
+                            if(imxpad_calibrationOTN_SLOW(m_modules_mask,(char*)m_calibration_path.c_str(),m_calibration_adjusting_number) == 0)
                             {
                                 DEB_TRACE() << "calibrateOTNSlow -> imxpad_calibrationOTN_SLOW -> OK" ;
                             }
                             else
                             {
+
+	                            Event *my_event = new Event(Hardware, Event::Error, Event::Camera, Event::Default, "the calibration path already exist");
+	                            //DEB_EVENT(*my_event) << DEB_VAR1(*my_event);
+	                            reportEvent(my_event);
+
                                 m_status = Camera::Fault;
                                 //- TODO: get the xpix error 
                                 throw LIMA_HW_EXC(Error, "Error in imxpad_calibrationOTN_SLOW!");
@@ -941,7 +973,7 @@ void Camera::handle_message( yat::Message& msg )  throw( yat::Exception )
 //-----------------------------------------------------
 //      setExposureParam
 //-----------------------------------------------------
-void Camera::setExposureParameters(  unsigned Texp,unsigned Twait,unsigned Tinit,
+void Camera::setExposureParameters( unsigned Texp,unsigned Twait,unsigned Tinit,
 			                         unsigned Tshutter,unsigned Tovf,unsigned trigger_mode, unsigned n,unsigned p,
 			                         unsigned nbImages,unsigned BusyOutSel,unsigned formatIMG,unsigned postProc,
 			                         unsigned GP1,unsigned GP2,unsigned GP3,unsigned GP4)
@@ -1279,4 +1311,16 @@ void Camera::setSpecificParameters( unsigned deadtime, unsigned init,
 	m_specific_param_GP2		= GP2;
 	m_specific_param_GP3		= GP3;
 	m_specific_param_GP4		= GP4;
+}
+
+
+//-----------------------------------------------------
+//		decrement the ITHL
+//-----------------------------------------------------
+void Camera::setCalibrationAdjustingNumber(unsigned calibration_adjusting_number)
+{
+    DEB_MEMBER_FUNCT();
+
+    m_calibration_adjusting_number = calibration_adjusting_number;
+
 }

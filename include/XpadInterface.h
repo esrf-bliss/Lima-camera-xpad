@@ -120,7 +120,7 @@ class SyncCtrlObj : public HwSyncCtrlObj
     virtual void getExpTime(double& exp_time);
 
     virtual void setLatTime(double  lat_time){}//- Not supported by Xpad
-    virtual void getLatTime(double& lat_time){}//- Not supported by Xpad
+    virtual void getLatTime(double& lat_time){lat_time = 0;}//- Not supported by Xpad
 
     virtual void setNbHwFrames(int  nb_frames);
     virtual void getNbHwFrames(int& nb_frames);
@@ -129,6 +129,19 @@ class SyncCtrlObj : public HwSyncCtrlObj
 
   private:
     Camera& m_cam;
+};
+
+/*******************************************************************
+ * \class EventCtrlObj
+ * \brief Control object providing Xpad event interface
+ *******************************************************************/
+class EventCtrlObj : public HwEventCtrlObj
+{
+	DEB_CLASS(DebModCamera, "EventCtrlObj");
+
+public:
+	EventCtrlObj();
+	virtual ~EventCtrlObj();
 };
 
 /*******************************************************************
@@ -163,6 +176,7 @@ class Interface : public HwInterface
 	DetInfoCtrlObj	m_det_info;
 	BufferCtrlObj	m_buffer;
 	SyncCtrlObj		m_sync;
+    EventCtrlObj   m_event;
 
 };
 } // namespace xpad

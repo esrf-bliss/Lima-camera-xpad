@@ -22,24 +22,17 @@
 #ifndef XPADCAMERA_H
 #define XPADCAMERA_H
 
-///////////////////////////////////////////////////////////
-// YAT::TASK 
-///////////////////////////////////////////////////////////
+//- Yat Task
 #include <yat/threading/Task.h>
 
 #define kLO_WATER_MARK      128
 #define kHI_WATER_MARK      512
-
 #define kPOST_MSG_TMO       2
 
 const size_t  XPAD_DLL_START_SYNC_MSG		=	(yat::FIRST_USER_MSG + 100);
 const size_t  XPAD_DLL_START_ASYNC_MSG		=	(yat::FIRST_USER_MSG + 101);
 const size_t  XPAD_DLL_START_LIVE_ACQ_MSG	=	(yat::FIRST_USER_MSG + 102);
 const size_t  XPAD_DLL_CALIBRATE		    =	(yat::FIRST_USER_MSG + 103);
-
-
-
-///////////////////////////////////////////////////////////
 
 //- Xpix
 #include <xpci_interface.h>
@@ -51,8 +44,10 @@ const size_t  XPAD_DLL_CALIBRATE		    =	(yat::FIRST_USER_MSG + 103);
 #include <stdlib.h>
 #include <limits>
 
+//- Lima
 #include "HwMaxImageSizeCallback.h"
 #include "HwBufferMgr.h"
+#include "Event.h"
 
 using namespace std;
 
@@ -73,14 +68,18 @@ namespace Xpad
 	* \class Camera
 	* \brief object controlling the xpad detector via xpix driver
 	*******************************************************************/
-	class Camera : public yat::Task
+	class Camera : public yat::Task,public EventCallbackGen
 	{
 		DEB_CLASS_NAMESPC(DebModCamera, "Camera", "Xpad");
 
 	public:
 
 		enum Status {
-			Ready, Exposure, Readout, Fault, Calibrating
+			        Ready,
+                    Exposure,
+                    Readout,
+                    Fault,
+                    Calibrating
 		};
 
         enum XpadAcqType {
@@ -91,9 +90,9 @@ namespace Xpad
         enum CalibrationType {
 	                OTN_SLOW = 0,
 	                OTN_MEDIUM,
-			OTN_HIGH,
-			BEAM,
-			UPLOAD
+			        OTN_HIGH,
+			        BEAM,
+			        UPLOAD
 		};
 
         //- CTOR/DTOR
@@ -177,7 +176,8 @@ namespace Xpad
 								    unsigned n,       unsigned p,
 								    unsigned GP1,     unsigned GP2,    unsigned GP3,      unsigned GP4);
 
-
+        //! Set the Calibration Adjusting number of iteration
+        void setCalibrationAdjustingNumber(unsigned calibration_adjusting_number);
 
 
 		//- yat::Task implementation
@@ -212,6 +212,7 @@ namespace Xpad
         vector<long>	        m_all_config_g;
         unsigned short 			m_xpad_model;
         string                  m_calibration_path;
+        unsigned int            m_calibration_adjusting_number;
         //unsigned short*         m_dacl;
         //- Specific xpad stuff
         unsigned int m_time_between_images_usec; //- Temps entre chaque image
